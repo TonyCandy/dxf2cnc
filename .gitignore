@@ -1,0 +1,22 @@
+# 业务数据：图纸/刀路/过程文件（含客户数据，不上传）
+基础数据文件/
+*.dxf
+*.dwg
+*.cnc
+*.baoyuan
+*.art
+*.CON
+*.log
+
+# 任务提示词与历史需求文档（按用户要求：除 README.md 外不上传 md）
+*.md
+!README.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 系统
+Thumbs.db
+desktop.ini

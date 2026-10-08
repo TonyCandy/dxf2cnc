@@ -1,0 +1,40 @@
+{
+  "tools": [
+    {
+      "id": "T1",
+      "number": 1,
+      "diameter": 6.0,
+      "type": "endmill",
+      "usage": "开槽/轮廓/φ11 螺旋",
+      "spindle": 18000,
+      "plunge_f": 3000,
+      "feed_f": 9000,
+      "max_stepdown": 10.0,
+      "stepover_factor": 0.9
+    },
+    {
+      "id": "T2",
+      "number": 2,
+      "diameter": 4.0,
+      "type": "endmill",
+      "usage": "小孔钻孔 φ5.5 / 沉头孔",
+      "spindle": 18000,
+      "plunge_f": 3000,
+      "feed_f": 9000,
+      "max_stepdown": 10.0,
+      "stepover_factor": 0.9
+    },
+    {
+      "id": "T3",
+      "number": 3,
+      "diameter": 2.0,
+      "type": "drill",
+      "usage": "",
+      "spindle": 18000.0,
+      "plunge_f": 9000.0,
+      "feed_f": 9000.0,
+      "max_stepdown": 10.0,
+      "stepover_factor": 0.9
+    }
+  ]
+}

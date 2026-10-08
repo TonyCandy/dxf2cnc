@@ -1,0 +1,63 @@
+{
+  "standard_holes": [
+    {
+      "diameter": 11.0,
+      "kind": "THROUGH_HOLE",
+      "tool": "T1",
+      "depth": 20.0,
+      "n_passes": 2,
+      "stepdown": 0.0,
+      "strategy": "spiral"
+    },
+    {
+      "diameter": 23.0,
+      "kind": "COUNTERBORE",
+      "tool": "T1",
+      "depth": 4.0,
+      "n_passes": 1,
+      "stepdown": 0.0,
+      "strategy": "spiral"
+    },
+    {
+      "diameter": 5.5,
+      "kind": "DRILL",
+      "tool": "T2",
+      "depth": 15.0,
+      "n_passes": null,
+      "stepdown": 5.0,
+      "strategy": "spiral"
+    }
+  ],
+  "layer_defaults": {
+    "T01": {
+      "depth": 3.0,
+      "n_passes": 1,
+      "strategy": "offset_pocket",
+      "tool": "T1"
+    },
+    "T02": {
+      "depth": 10.0,
+      "n_passes": 2,
+      "strategy": "offset_pocket",
+      "tool": "T1"
+    },
+    "平行X": {
+      "depth": 10.0,
+      "n_passes": 2,
+      "strategy": "parallel_pocket",
+      "tool": "T1"
+    },
+    "平行Y": {
+      "depth": 10.0,
+      "n_passes": 2,
+      "strategy": "parallel_pocket",
+      "tool": "T1"
+    },
+    "偏置清槽": {
+      "depth": 10.0,
+      "n_passes": 2,
+      "strategy": "offset_pocket",
+      "tool": "T1"
+    }
+  }
+}
