@@ -987,10 +987,17 @@ class RuleTab(ttk.Frame):
     def _update_strategy_rows(self):
         """仅偏置/平行清槽显示行距/方向，其余策略隐藏（与主界面参数栏一致）。"""
         code = dict(_RULE_STRATS).get(self.vars["strategy"].get(), SPIRAL)
-        pocket = code in (OFFSET_POCKET, PARALLEL_POCKET)
         for key in self._POCKET_ONLY:
             label_w, input_w = self._rows[key]
-            if pocket:
+            if key in ("stepover_factor", "stepover_mm"):
+                show = code in (OFFSET_POCKET, PARALLEL_POCKET)
+            elif key == "parallel_axis":
+                show = code == PARALLEL_POCKET
+            elif key == "pocket_direction":
+                show = code == OFFSET_POCKET
+            else:
+                show = False
+            if show:
                 label_w.grid()
                 input_w.grid()
             else:
