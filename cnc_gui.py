@@ -1141,6 +1141,11 @@ class RulesDialog(tk.Toplevel):
 
 if __name__ == "__main__":
     app = App()
+    # 窗口图标：取脚本同目录的 app.ico，文件缺失则静默忽略，保留默认图标
+    try:
+        app.iconbitmap(str(Path(__file__).with_name("app.ico")))
+    except tk.TclError:
+        pass
     if len(sys.argv) > 1 and sys.argv[1].lower().endswith(".baoyuan"):
         p = sys.argv[1]
         app.after(300, lambda: app._load_baoyuan(p))

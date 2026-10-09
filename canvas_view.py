@@ -211,7 +211,8 @@ class CanvasView(ttk.Frame):
                 self._draw_coverage(self.coverage, C_COVERAGE)
             for fid, poly in self.feature_coverage.items():
                 if poly is not None:
-                    self._draw_coverage(poly, C_COVERAGE, fid=fid)
+                    self._draw_coverage(poly, C_COVERAGE, fid=fid,
+                                        draw_holes=False)
 
         # 刀路预览
         if self.show_toolpath.get() and self.moves:
@@ -245,12 +246,16 @@ class CanvasView(ttk.Frame):
         scr = [coord for p in pts for coord in self.to_screen(*p)]
         self.canvas.create_line(scr, fill=color, width=width)
 
-    def _draw_coverage(self, poly, fill_color, fid: str | None = None):
+    def _draw_coverage(self, poly, fill_color, fid: str | None = None,
+                       draw_holes: bool = True):
         """覆盖区：外环半透明深绿 + 每个洞单独橙红实心（漏切区高亮）。
 
         MultiPolygon 逐个 geoms 画；每个 geoms 先画 exterior，再对每个
         interior 洞单独 create_polygon —— 禁止与外环平铺（Tk 奇偶填充
         对多洞+共享顶点判定失效，洞会被填满，已实测）。
+        洞=整体并集的漏切区，仅画在整体并集上（draw_holes=True）；特征
+        分区不画自己的洞（draw_holes=False），避免 φ23 环心这类被其他
+        特征实际覆盖的区域误报漏切、并遮挡点选高亮。
         洞不登记 _cov_items，固定 C_COVER_HOLE，不随点选换色。
         """
         c = self.canvas
@@ -264,11 +269,12 @@ class CanvasView(ttk.Frame):
                 scr.extend(self.to_screen(*p))
             item = c.create_polygon(scr, fill=fill_color, outline="",
                                     stipple="gray50")
-            for hole in pg.interiors:            # 每个洞单独画：漏切橙红实心
-                hscr: list[float] = []
-                for p in hole.coords:
-                    hscr.extend(self.to_screen(*p))
-                c.create_polygon(hscr, fill=C_COVER_HOLE, outline="")
+            if draw_holes:              # 洞=漏切橙红；特征分区不画洞，避免误报+遮挡
+                for hole in pg.interiors:
+                    hscr: list[float] = []
+                    for p in hole.coords:
+                        hscr.extend(self.to_screen(*p))
+                    c.create_polygon(hscr, fill=C_COVER_HOLE, outline="")
             if fid is not None:
                 self._cov_items[fid] = item
             else:
