@@ -56,10 +56,10 @@ def _classify_layer(name: str, ignore_names: list[str]) -> str:
     # 剖面线层
     if "剖面" in n:
         return ROLE_SECTION
-    # 钻孔层：φ11 / PH / 孔 / 纯数字
-    if "φ" in n or "Φ" in n or "ph" in low or "孔" in n:
+    # 钻孔层：φ/𝛟/Φ/ｆ/⌀ / PH / 孔 / 纯数字
+    if any(ch in n for ch in ("φ", "𝛟", "Φ", "ｆ", "⌀")) or "ph" in low or "孔" in n:
         return ROLE_DRILL
-    stripped = n.replace("φ", "").replace("Φ", "").strip()
+    stripped = n.replace("φ", "").replace("𝛟", "").replace("Φ", "").replace("ｆ", "").replace("⌀", "").strip()
     if stripped.replace(".", "").replace(",", "").isdigit():
         return ROLE_DRILL
     # 刀号层：T01 / T02 / T1 / T6 …
@@ -70,21 +70,15 @@ def _classify_layer(name: str, ignore_names: list[str]) -> str:
 
 
 def layer_diameter_hint(layer: str) -> float | None:
-    """从图层名提取直径提示，如 'φ11' → 11.0。"""
+    """从图层名提取直径提示：φ11 / 𝛟11 / Φ11 / ｆ11 / ⌀11 → 11.0。纯数字图层名不再解析。"""
     n = layer.strip()
-    for ch in ("φ", "Φ"):
+    for ch in ("φ", "𝛟", "Φ", "ｆ", "⌀"):
         if ch in n:
             tail = n.split(ch)[-1].strip()
             try:
                 return float(tail)
             except ValueError:
                 pass
-    stripped = n.strip()
-    if stripped.replace(".", "").isdigit():
-        try:
-            return float(stripped)
-        except ValueError:
-            pass
     return None
 
 

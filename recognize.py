@@ -16,7 +16,7 @@ from model import (Contour, Feature, FeatureParams, JobConfig,
 import geom
 from io_dxf import (DxfData, ROLE_DRILL, ROLE_TOOL, ROLE_SECTION,
                     ROLE_ZERO, ROLE_GEOM, ROLE_ISLAND,
-                    layer_diameter_hint, layer_tool_hint)
+                    layer_diameter_hint)
 
 
 # ----------------------------------------------------------------------------
@@ -253,10 +253,8 @@ def recognize(data: DxfData, cfg: JobConfig | None = None,
         if c.is_rect and c.size:
             w, h = c.size
             # 图层刀号默认（T01/T02）
-            t_hint = layer_tool_hint(c.layer)
-            ld = rules.layer_defaults.get(f"T{t_hint:02d}") if t_hint else None
-            if ld is None:
-                ld = rules.layer_defaults.get(c.layer)
+            # 图层默认：精确按图层名匹配 rules.json layer_defaults
+            ld = rules.layer_defaults.get(c.layer)
             if ld is not None:
                 p = FeatureParams(tool_id=ld.tool, depth=ld.depth,
                                   n_passes=ld.n_passes, stepdown=0,
