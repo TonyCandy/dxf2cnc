@@ -7,7 +7,11 @@
       "depth": 20.0,
       "n_passes": 2,
       "stepdown": 0.0,
-      "strategy": "spiral"
+      "strategy": "spiral",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     },
     {
       "diameter": 23.0,
@@ -16,7 +20,11 @@
       "depth": 4.0,
       "n_passes": 1,
       "stepdown": 0.0,
-      "strategy": "spiral"
+      "strategy": "spiral",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     },
     {
       "diameter": 5.5,
@@ -25,7 +33,11 @@
       "depth": 15.0,
       "n_passes": null,
       "stepdown": 5.0,
-      "strategy": "spiral"
+      "strategy": "spiral",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     }
   ],
   "layer_defaults": {
@@ -33,31 +45,71 @@
       "depth": 3.0,
       "n_passes": 1,
       "strategy": "offset_pocket",
-      "tool": "T1"
+      "tool": "T1",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     },
     "T02": {
       "depth": 10.0,
       "n_passes": 2,
       "strategy": "offset_pocket",
-      "tool": "T1"
+      "tool": "T1",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     },
     "平行X": {
       "depth": 10.0,
       "n_passes": 2,
       "strategy": "parallel_pocket",
-      "tool": "T1"
+      "tool": "T1",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     },
     "平行Y": {
       "depth": 10.0,
       "n_passes": 2,
       "strategy": "parallel_pocket",
-      "tool": "T1"
+      "tool": "T1",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     },
     "偏置清槽": {
       "depth": 10.0,
       "n_passes": 2,
       "strategy": "offset_pocket",
-      "tool": "T1"
+      "tool": "T1",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
+    },
+    "区域清除": {
+      "depth": 10.0,
+      "n_passes": 1,
+      "strategy": "offset_pocket",
+      "tool": "T1",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
+    },
+    "轮廓外": {
+      "depth": 20.0,
+      "n_passes": 2,
+      "strategy": "contour",
+      "tool": "T1",
+      "stepover_factor": 0.9,
+      "stepover_mm": null,
+      "parallel_axis": "X",
+      "pocket_direction": "outside_in"
     }
   }
 }

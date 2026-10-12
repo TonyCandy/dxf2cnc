@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['E:/AI/AI刀路trae/cnc_gui.py'],
+    ['E:/AI/AI编程/AI编程-dxf2cnc刀路trae/cnc_gui.py'],
     pathex=[],
     binaries=[],
     datas=[('config', 'config'), ('app.ico', '.')],
@@ -32,7 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['E:/AI/AI刀路trae/app.ico'],
+    icon=['E:/AI/AI编程/AI编程-dxf2cnc刀路trae/app.ico'],
 )
 coll = COLLECT(
     exe,

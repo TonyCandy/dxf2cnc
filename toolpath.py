@@ -636,6 +636,13 @@ def gen_feature_moves(feature: Feature, contour: Contour,
                             contour.diameter, tool, depths, cfg,
                             overcut=overcut, ccw=p.climb)
 
+    if p.strategy == SPIRAL and contour.closed:
+        # 用户定义：螺旋下刀=几何轮廓内加工——刀心沿轮廓向内偏置 D/2
+        # 走一圈（刀外沿恰到轮廓线）。圆孔已在上方 helical_hole 处理；
+        # 非圆闭合轮廓（含螺旋切透的槽形）走内偏轮廓。轮廓外加工用 CONTOUR。
+        return contour_moves(contour.pts, tool, depths, cfg,
+                             side="inside", allowance=0.0)
+
     if p.strategy == DIRECT_PLUNGE:
         ap = p.approach_z if p.approach_z is not None else 1.0
         return direct_plunge(contour.centroid[0], contour.centroid[1],

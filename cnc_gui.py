@@ -20,7 +20,7 @@ from panels import LeftViews, ParamsPanel, STRATEGIES
 import toolpath
 from model import (JobConfig, Tool, ToolLibrary, Feature, Move, THROUGH_HOLE,
                    DRILL, COUNTERBORE, RECT_POCKET, POCKET, CIRCULAR_POCKET,
-                   SPIRAL, VECTOR_CUT, OFFSET_POCKET, PARALLEL_POCKET)
+                   SPIRAL, VECTOR_CUT, OFFSET_POCKET, PARALLEL_POCKET, CONTOUR)
 from io_dxf import ROLE_IGNORE
 from recognize import Rules, HoleRule, LayerDefault
 
@@ -102,7 +102,8 @@ class App(tk.Tk):
         # 排序策略
         ttk.Label(bar, text="排序:").pack(side=tk.LEFT)
         self._sort_names = {"绕板默认": "around", "按刀具分组": "by_tool",
-                            "就近最少空跑": "nearest", "手动锁定": "manual"}
+                            "就近最少空跑": "nearest", "手动锁定": "manual",
+                            "贪心聚类": "cluster"}
         self._sort_var = tk.StringVar(value="绕板默认")
         cb = ttk.Combobox(bar, textvariable=self._sort_var, state="readonly",
                           width=10, values=list(self._sort_names.keys()))
@@ -296,23 +297,28 @@ class App(tk.Tk):
         刀径从刀具库按刀取——不同刀直径不同，禁止用第一把刀刀径统一算。
         """
         from shapely.ops import unary_union
-        polys = []
-        for tid, lst in (moves_by_tool or {}).items():
-            try:
-                dia = self.job.lib.get(tid).diameter
-            except KeyError:
-                continue          # 未知刀具无刀径，跳过该刀
-            pg = toolpath.covered_area(lst, dia)
-            if pg is not None:
-                polys.append(pg)
-        self.view.set_coverage(unary_union(polys) if polys else None)
         # 特征覆盖区：fid → 该特征全部 FEED 段沿其刀具刀径的并集
         by_fid = {f.id: f for f in self.job.result.features} \
             if self.job.result else {}
+        # 整体覆盖区：遍历特征级刀路，跳过 CONTOUR 轮廓特征
+        # （轮廓=沿轮廓切一圈，用刀心轨迹线表示，不参与覆盖区/清料检查）
+        polys: list = []
+        for fid, mv in (feature_moves or {}).items():
+            f = by_fid.get(fid)
+            if f is None or f.params.strategy == CONTOUR:
+                continue
+            try:
+                dia = self.job.lib.get(f.params.tool_id).diameter
+            except KeyError:
+                continue
+            pg = toolpath.covered_area(mv, dia)
+            if pg is not None:
+                polys.append(pg)
+        self.view.set_coverage(unary_union(polys) if polys else None)
         fcov: dict = {}
         for fid, mv in (feature_moves or {}).items():
             f = by_fid.get(fid)
-            if f is None:
+            if f is None or f.params.strategy == CONTOUR:
                 continue
             try:
                 dia = self.job.lib.get(f.params.tool_id).diameter

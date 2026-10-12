@@ -272,12 +272,25 @@ def recognize(data: DxfData, cfg: JobConfig | None = None,
             if ld is None:
                 f.warnings.append("矩形沉槽：深度需手填")
         else:
-            # R6 一般凹槽
-            p = FeatureParams(strategy=OFFSET_POCKET)
-            f = new_feature(POCKET, c, p,
-                            f"凹槽 {c.area:.0f}mm² @ ({c.centroid[0]:.1f}, {c.centroid[1]:.1f})",
-                            "一般凹槽")
-            f.warnings.append("一般凹槽：深度需手填")
+            # R6 一般凹槽：非矩形闭环同样查图层默认规则（与矩形分支一致）
+            ld = rules.layer_defaults.get(c.layer)
+            if ld is not None:
+                p = FeatureParams(tool_id=ld.tool, depth=ld.depth,
+                                  n_passes=ld.n_passes, stepdown=0,
+                                  strategy=ld.strategy,
+                                  stepover_factor=ld.stepover_factor,
+                                  stepover_mm=ld.stepover_mm,
+                                  parallel_axis=ld.parallel_axis,
+                                  pocket_direction=ld.pocket_direction)
+                f = new_feature(POCKET, c, p,
+                                f"{c.layer} 凹槽 {c.area:.0f}mm² @ ({c.centroid[0]:.1f}, {c.centroid[1]:.1f})",
+                                f"{c.layer} 凹槽")
+            else:
+                p = FeatureParams(strategy=OFFSET_POCKET)
+                f = new_feature(POCKET, c, p,
+                                f"凹槽 {c.area:.0f}mm² @ ({c.centroid[0]:.1f}, {c.centroid[1]:.1f})",
+                                "一般凹槽")
+                f.warnings.append("一般凹槽：深度需手填")
 
     # ---- 同心配对：THROUGH_HOLE + 同心 COUNTERBORE → paired ----
     holes = [f for f in res.features if f.kind == THROUGH_HOLE]
