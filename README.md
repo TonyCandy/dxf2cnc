@@ -52,6 +52,36 @@
 - 运行时依赖仅 2 个：`ezdxf`（DXF 读取）、`shapely`（多边形偏置/布尔）
 - 测试：pytest
 
+## 架构与数据流
+
+```
+DXF → io_dxf（DxfData：entities/ignored + layer_roles）
+    → recognize（RecognitionResult.features/contours，用 rules.json）
+    → sort.sort_features（绕板/按刀/就近/手动）→ ordered
+    → toolpath.gen_feature_moves（逐特征）→ moves（FEED/RAPID/PLUNGE/RETRACT）
+    → cam.export_by_tool → post_baoyuan 写 .cnc；GUI 写 .baoyuan（含刀路快照）
+打开 .baoyuan → 恢复几何 + 参数 + 刀路快照 → 画布预览
+```
+
+**关键数据结构**（model.py）：
+
+- `FeatureParams`：tool_id / depth / stepdown / n_passes / strategy / climb /
+  stepover_factor（行距系数）/ stepover_mm / parallel_axis（平行清槽方向 X/Y）/
+  pocket_direction（偏置清槽 外→内/内→外）/ vector_side（矢量刀位 左/右/居中）/
+  contour_side（轮廓刀位 自动/内/外）/ allowance（余量）/ enabled
+- `Move`：kind（FEED/RAPID/PLUNGE/RETRACT）/ x / y / z / f；x/y 为 None 表示纯 Z 段
+- `Board`（板级缓存）：几何/参数/排序/`moves_by_tool`/`feature_moves`，
+  切板只读复用，"生成刀路"按钮与导出时刷新
+
+模块依赖方向（单向，勿反依赖）：
+
+```
+io_dxf → geom → recognize → model ← toolpath → post_baoyuan
+                            ↑            ↑
+                        sort.py      cam.py（管线，测试与 GUI 共用）
+                                    cnc_gui → panels / canvas_view
+```
+
 ## 目录结构
 
 ```
@@ -102,20 +132,40 @@ python cnc_gui.py
 - 单刀单文件：多刀作业导出多个 `.cnc`，文件内无中途换刀
 - 端点间隙 >0.05mm 的线段不自动闭合（保留为开放链）
 - 刀心轨迹线预览当前仅显示第一把刀（覆盖区预览为全部刀具）
+- 同一 DXF 导出的 `.baoyuan` 请勿与其他文件混选导入（特征 id 不加板名前缀会冲突）；单选正常
 
 ## 开发注意事项
-
-模块依赖方向（单向，勿反依赖）：
-
-```
-io_dxf → geom → recognize → model ← toolpath → post_baoyuan
-                            ↑            ↑
-                        sort.py      cam.py（管线，测试与 GUI 共用）
-                                    cnc_gui → panels / canvas_view
-```
 
 - L4 中性刀路（`Move[]`）不得出现行号/G90/M30 等输出层概念，那是 `post_baoyuan.py` 的职责
 - 改刀轨或后处理后建议跑回归：`python -m pytest tests/ -v`
 - 硬约束：DXF 读取保留 GBK 回退；输出 CRLF + ASCII、坐标 4 位小数、F 1 位小数、行号 N3 起连续、字地址间无空格、模态轴省略
 - GUI 事件绑定：`<<TreeviewSelect>>` 虚拟事件在部分环境点击不触发，树选择绑 `ButtonRelease-1` 兜底
 - 项目为独立实现，未参考 GPL 项目源码
+
+**刀路缓存与失效**：参数/顺序改动清活动板 `moves_by_tool`/`feature_moves` 与画布刀路；切板不清缓存；刀路只来自"生成刀路"按钮 / 导出 / `.baoyuan` 快照，无懒加载现算。批量导出循环里逐板切 `job.result`，存 `.baoyuan` 必须显式传 board，禁止读 `job.data`（不是当前板）。
+
+**tkinter 无透明**：半透明效果用 `stipple`；外环+洞平铺进同一个 `create_polygon` 会让填充规则失效、洞被填——外环和洞必须分开画。
+
+**覆盖区语义**：绿 = 全部策略 FEED 段按各自刀径 buffer 的并集（含轮廓/螺旋的刀径宽环带）；红 = 仅清槽"该清未清"区 = 目标可达区（口袋内缩 reach 再外扩 D/2，`reach = D/2 - (pocket_overcut - allowance)`）− 总覆盖。螺旋/轮廓环心、避让岛是洞不是漏切，只挖黑不报红。
+
+**覆盖区绘制结构**（重构后，勿回退）：①覆盖区整层先于几何创建（z 序在几何之下），洞块/条带永不遮挡几何；②条带 = 单外环 stipple（gray75）；③洞区递归绘制：`bg = hole − coverage` 逐 part 画背景色垫底 + `covered = hole ∩ coverage` 逐 part 补条带色 + covered 的 interiors 递归（深度=同心层数）。勿改回"vis 只画 exterior"（interiors 丢失会多盖相邻条带），也勿把洞块垫在条带之下（单外环填充会把洞区误填绿）——两者均已实测证伪。
+
+## 开发工作流
+
+- 一个功能一份编号任务文档（`00X.md`），只描述该任务涉及的文件与验收标准，改完即实测验收；不顺手改任务外文件
+- 覆盖区/刀路相关任务验收固定含：`python -m pytest tests/` 回归 + 真实 GUI 实机截图
+- 增量备份：`git add` 具体文件 → `git commit` → `git push`（远程 `main`）
+
+## 开发历程
+
+| 阶段 | 内容 |
+|---|---|
+| 初始版本 | DXF 读取、R1–R9 识别、排序、六种策略刀路、宝元后处理、GUI 主框架 |
+| 000 | 刀轨覆盖区预览（全刀并集 / 点选高亮 / `.baoyuan` 存刀路快照） |
+| 001 | "生成刀路"按钮（弃懒加载，只算当前板） |
+| 002 | 覆盖区洞填充修复（外环/洞分开画） |
+| 003 | 规则集补清槽下一级参数 + 动态显隐（孔规则/图层规则双 Tab） |
+| 005 | PyInstaller 打包（onedir + 应用图标），tag `v0.1.0` |
+| 007 | 覆盖区不再遮挡点选特征 |
+| 015 | 覆盖区语义修正：轮廓/螺旋刀径条带纳入显示、环心不红、漏切红仅清槽显式计算、避让岛不红；轮廓新增刀位参数（自动/内/外） |
+| 016 | 覆盖区绘制重构：洞区递归绘制 + 覆盖层下沉，修复勾选覆盖区后内部图形消失/环形条带不显示 |
