@@ -52,12 +52,12 @@ class CanvasView(ttk.Frame):
         self.show_order = tk.BooleanVar(value=True)
         self.show_toolpath = tk.BooleanVar(value=False)
         self.show_coverage = tk.BooleanVar(value=False)   # 覆盖区（默认不勾选）
-        # 覆盖区数据（shapely Polygon/MultiPolygon）：整体并集 + 每特征分区
-        self.coverage = None                  # 全部刀 FEED 覆盖并集
-        self.feature_coverage: dict = {}      # fid → 该特征覆盖区
-        self.missed_areas = None              # 清槽漏切区（红色实心，仅清槽）
-        self._cov_items: dict[str, int] = {}  # fid → 特征覆盖区 polygon item
-        self._coverage_item: int | None = None  # 整体覆盖区 item（不参与特征换色）
+        # 覆盖区预计算结果（017）：生成刀路时由 toolpath.expand_coverage_for_draw
+        # 展开为扁平 ring 列表（世界坐标），绘制只做坐标变换 + create_polygon，
+        # 不再做任何 shapely 运算。每项 {"ring","fill","stipple","fid"}。
+        self.coverage_draw_list: list[dict] = []
+        self.missed_draw_list: list[dict] = []
+        self._cov_items: dict[str, list[int]] = {}  # fid → 条带 item 列表（点选换色）
 
         # item → feature_id 映射（高亮/点选）：fid → [(item_id, 原色), ...]
         self._feat_items: dict[str, list[tuple[int, str]]] = {}
@@ -89,11 +89,9 @@ class CanvasView(ttk.Frame):
                 objs.append({"kind": "polyline", "pts": it})
         self.ignored_objs = objs
         self.moves = []
-        self.coverage = None            # 切板清覆盖区（由调用方随后重新设置）
-        self.feature_coverage = {}
-        self.missed_areas = None
+        self.coverage_draw_list = []    # 切板清覆盖区（由调用方随后重新设置）
+        self.missed_draw_list = []
         self._cov_items = {}
-        self._coverage_item = None
         self._selected.clear()
         self._fit_done = False
         self.redraw()
@@ -103,20 +101,11 @@ class CanvasView(ttk.Frame):
         self.show_toolpath.set(bool(self.moves))
         self.redraw()
 
-    def set_coverage(self, polygon):
-        """整体覆盖区（全部刀 FEED 并集），None 清除。"""
-        self.coverage = polygon
-        self.redraw()
-
-    def set_feature_coverage(self, cov_map: dict):
-        """特征覆盖区 {fid: Polygon}，供点选高亮联动。"""
-        self.feature_coverage = cov_map or {}
-        self.redraw()
-
-    def set_missed_areas(self, polygon):
-        """清槽漏切区（仅清槽策略目标可达区未覆盖部分），None 清除。
-        螺旋/轮廓环内、避让岛不在其中（对齐 ArtCAM 绘制实体语义）。"""
-        self.missed_areas = polygon
+    def set_coverage_draw_data(self, coverage_draw_list: list[dict],
+                               missed_draw_list: list[dict]):
+        """接收展开好的覆盖区绘制数据（017，生成刀路时算一次）。"""
+        self.coverage_draw_list = coverage_draw_list or []
+        self.missed_draw_list = missed_draw_list or []
         self.redraw()
 
     def set_data_keep(self, features: list[Feature]):
@@ -140,19 +129,16 @@ class CanvasView(ttk.Frame):
         self._draw_axes()
         by_id = {f.id: f for f in self.features}
 
-        # 覆盖区整层在几何之前创建（z 序在几何之下，016）：整体条带+洞区 →
-        # 分区条带+洞区 → 漏切红。绿色 = 刀具实际扫过的实体条带（含轮廓/螺旋）；
-        # 洞区=未覆盖区（C_BG 垫底露底色），洞内被其他特征覆盖的部分补回条带
-        # 色；红色只画清槽"应清未清"区（螺旋/轮廓环内、避让岛不红）。
-        # 几何/标注/刀路后创建（z 序在上）→ 洞块/条带永不遮挡几何与刀路。
+        # 覆盖区整层在几何之前创建（z 序在几何之下，016）：绘制数据已由
+        # expand_coverage_for_draw 展开为扁平 ring 列表（017），此处只做
+        # 坐标变换 + create_polygon，无任何 shapely 运算。列表顺序即 016
+        # 绘制顺序（条带→洞垫底→补色→深洞递归），绿=扫过条带、黑=未覆盖、
+        # 红=清槽漏切（missed_draw_list 在其后）。
         if self.show_coverage.get():
-            if self.coverage is not None:
-                self._draw_coverage(self.coverage, C_COVERAGE)
-            for fid, poly in self.feature_coverage.items():
-                if poly is not None:
-                    self._draw_coverage(poly, C_COVERAGE, fid=fid)
-            if self.missed_areas is not None:
-                self._draw_missed(self.missed_areas)
+            for item in self.coverage_draw_list:
+                self._draw_precomputed_ring(item)
+            for item in self.missed_draw_list:
+                self._draw_precomputed_ring(item)
 
         # 忽略层：按对象类型绘制（折线/圆/文字/点）
         if self.show_ignored.get():
@@ -259,107 +245,25 @@ class CanvasView(ttk.Frame):
         scr = [coord for p in pts for coord in self.to_screen(*p)]
         self.canvas.create_line(scr, fill=color, width=width)
 
-    def _draw_coverage(self, poly, fill_color, fid: str | None = None):
-        """覆盖区条带 + 洞区（016）：外环 stipple → 逐洞递归绘制洞区。
+    def _draw_precomputed_ring(self, item: dict):
+        """画一条展开好的覆盖区 ring（017）：世界坐标 → 屏幕 → create_polygon。
 
-        条带=单外环 stipple（gray75 加密：覆盖区在几何下层不遮挡几何线，
-        增强"条带 vs 洞"对比）。洞区见 _draw_hole——旧法 vis=hole−coverage
-        只画 exterior 会把 vis 的 interiors 按外环填黑（多盖相邻条带/几何，
-        016 废除）。MultiPolygon 逐个 geoms 画；外环 item 登记供点选换色。
+        带 fid 的条带登记进 _cov_items（fid → item 列表）供点选换色；
+        洞垫底/补色/漏切块无 fid，只画不登记。
         """
-        c = self.canvas
-        polys = list(getattr(poly, "geoms", [poly]))
-        for pg in polys:
-            ext = getattr(pg, "exterior", None)
-            if ext is None:
-                continue
-            scr: list[float] = []
-            for p in ext.coords:                 # shapely exterior 已闭合
-                scr.extend(self.to_screen(*p))
-            item = c.create_polygon(scr, fill=fill_color, outline="",
-                                    stipple="gray75")
-            if fid is not None:
-                self._cov_items[fid] = item
-            else:
-                self._coverage_item = item
-            for hole in pg.interiors:
-                self._draw_hole(hole, fill_color)
-
-    @staticmethod
-    def _polys_of(geom):
-        """展平 Polygon/MultiPolygon/GeometryCollection → [Polygon]。
-        布尔结果可能混入线段（共享边界），只保留面。"""
-        if geom is None or geom.is_empty:
-            return []
-        if geom.geom_type == "Polygon":
-            return [geom]
-        out: list = []
-        for g in getattr(geom, "geoms", []):
-            out.extend(CanvasView._polys_of(g))
-        return out
-
-    def _draw_hole(self, hole_ring, strip_color):
-        """洞区绘制（递归）：未覆盖区 C_BG 垫底 + 被覆盖区补回条带色。
-
-        洞=条带围住的未扫描区域，但洞内可能套着其他特征的覆盖（φ23 环心
-        被 φ11 实心圆填、序10 螺旋洞内套序9 内侧条带）。绘制序：
-        ① bg=hole−coverage 逐 part 画 exterior（C_BG；bg 的 interiors=
-        更深覆盖区，先误盖）；② covered=hole∩coverage 逐 part 画 stipple
-        条带色补回（其 interiors=更深洞 → 递归，嵌套深度=同心层数）。
-        覆盖区整层在几何下层，本函数任何误盖均不伤几何；零面积缝隙洞
-        （离散圆并集残缝）跳过。
-        """
-        from shapely.geometry import Polygon as ShPolygon
-        c = self.canvas
-        try:
-            hp = ShPolygon(hole_ring)
-        except Exception:  # noqa: BLE001 —— 非法环跳过
+        ring = item["ring"]
+        if len(ring) < 3:
             return
-        if hp.area < 0.01:
-            return
-        if self.coverage is None:
-            self._fill_ring(hole_ring, C_BG)
-            return
-        try:
-            bg = hp.difference(self.coverage)
-            covered = hp.intersection(self.coverage)
-        except Exception:  # noqa: BLE001 —— 布尔失败退化为整洞填底色
-            self._fill_ring(hole_ring, C_BG)
-            return
-        for g in self._polys_of(bg):
-            self._fill_ring(g.exterior, C_BG)
-        for g in self._polys_of(covered):
-            scr: list[float] = []
-            for p in g.exterior.coords:
-                scr.extend(self.to_screen(*p))
-            c.create_polygon(scr, fill=strip_color, outline="", stipple="gray75")
-            for sub_hole in g.interiors:         # 更深洞递归
-                self._draw_hole(sub_hole, strip_color)
-
-    def _fill_ring(self, ring, color):
-        """闭合环 → C_BG 实心多边形（洞块垫底用）。"""
         scr: list[float] = []
-        for p in ring.coords:
+        for p in ring:
             scr.extend(self.to_screen(*p))
-        self.canvas.create_polygon(scr, fill=color, outline="")
-
-    def _draw_missed(self, poly):
-        """清槽漏切区：橙红实心块（画在绿色覆盖与特征分区之上，保证醒目）。
-
-        漏切块中的洞=已覆盖孤岛，用绿色 stipple 补回，不涂红。
-        """
-        c = self.canvas
-        polys = list(getattr(poly, "geoms", [poly]))
-        for pg in polys:
-            ext = getattr(pg, "exterior", None)
-            if ext is None:
-                continue
-            scr = [z for p in ext.coords for z in self.to_screen(*p)]
-            c.create_polygon(scr, fill=C_COVER_HOLE, outline="")
-            for hole in pg.interiors:
-                hscr = [z for p in hole.coords for z in self.to_screen(*p)]
-                c.create_polygon(hscr, fill=C_COVERAGE, outline="",
-                                 stipple="gray50")
+        kwargs: dict = {"fill": item["fill"], "outline": ""}
+        if item.get("stipple"):
+            kwargs["stipple"] = item["stipple"]
+        canvas_item = self.canvas.create_polygon(scr, **kwargs)
+        fid = item.get("fid")
+        if fid is not None:
+            self._cov_items.setdefault(fid, []).append(canvas_item)
 
     def _draw_ignored_obj(self, o: dict):
         """忽略层显示对象：折线 / 圆 / 文字 / 点（Y 翻转由 to_screen 统一处理）。"""
@@ -517,9 +421,9 @@ class CanvasView(ttk.Frame):
             for item, _color in self._feat_items.get(fid, []):
                 c.itemconfigure(item, width=3, fill=C_HIGHLIGHT)
         # 覆盖区随特征选中联动换色（恢复深绿 → 选中亮黄；不触发 redraw）
-        for _fid, item in self._cov_items.items():
-            c.itemconfigure(item, fill=C_COVERAGE)
+        for _fid, items in self._cov_items.items():
+            for item in items:
+                c.itemconfigure(item, fill=C_COVERAGE)
         for fid in self._selected:
-            item = self._cov_items.get(fid)
-            if item is not None:
+            for item in self._cov_items.get(fid, []):
                 c.itemconfigure(item, fill=C_ORDER)

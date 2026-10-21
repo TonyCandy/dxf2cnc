@@ -10,6 +10,7 @@
 
 # 任务提示词与历史需求文档（按用户要求：除 README.md 外不上传 md）
 *.md
+!项目记忆.md
 !README.md
 
 # Python

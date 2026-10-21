@@ -759,3 +759,105 @@ def pocket_missed_area(ring: list[tuple[float, float]],
     except Exception:  # noqa: BLE001
         return None
     return None if m.is_empty else m
+
+
+# ----------------------------------------------------------------------------
+# 覆盖区绘制数据展开（017）：把递归布尔从画布 redraw 前移到生成刀路阶段。
+# 展开结果为扁平 ring 列表（世界坐标），绘制层只做坐标变换 + create_polygon。
+# 视觉语义与 016 的 _draw_coverage/_draw_hole/_draw_missed 逐块一致。
+# ----------------------------------------------------------------------------
+
+def _polys_of(geom):
+    """展平 Polygon/MultiPolygon/GeometryCollection → [Polygon]（只留面）。"""
+    if geom is None or geom.is_empty:
+        return []
+    if geom.geom_type == "Polygon":
+        return [geom]
+    out: list = []
+    for g in getattr(geom, "geoms", []):
+        out.extend(_polys_of(g))
+    return out
+
+
+def expand_coverage_for_draw(coverage, feature_coverage: dict, missed_areas,
+                             bg_color: str, strip_color: str,
+                             missed_color: str) -> tuple[list[dict], list[dict]]:
+    """把 shapely 覆盖区展开为扁平可绘制列表（生成刀路时调用一次）。
+
+    返回 (coverage_draw_list, missed_draw_list)，每项：
+      {"ring": [(x,y),...], "fill": str, "stipple": str|None, "fid": str|None}
+
+    展开顺序 = 016 绘制顺序（保证 z 序视觉一致）：
+      ① 整体条带外环（gray75）→ 逐洞递归（bg=hole−coverage 垫底 C_BG 先画，
+         covered=hole∩coverage 补条带色 后画，covered 的 interiors 更深洞递归）
+      ② 各特征分区条带外环（登记 fid 供点选换色）→ 逐洞同上
+    条带是 Tk 单外环填充——洞必须靠后续 bg 块挖出，故洞处理紧随所属条带。
+
+    missed_areas（清槽漏切红）单独一张列表，绘制在其后：红 exterior 实心，
+    其 interiors（已覆盖孤岛）用条带色 gray50 补回（对齐 _draw_missed）。
+    """
+    from shapely.geometry import Polygon as ShPolygon
+
+    cov_list: list[dict] = []
+    missed_list: list[dict] = []
+
+    def emit_ring(ring, fill, stipple, fid=None):
+        cov_list.append({"ring": [(p[0], p[1]) for p in ring.coords],
+                         "fill": fill, "stipple": stipple, "fid": fid})
+
+    def draw_hole(hole_ring):
+        """洞区：bg 垫底 → covered 补条带色 → covered 洞递归（016 语义）。
+
+        洞区所有块一律 fid=None 不登记点选换色（016 语义：只有条带外环
+        随特征高亮；洞垫底/补色块若登记，_apply_selection 恢复时会把黑块
+        刷成条带绿——017 实测踩坑）。
+        """
+        try:
+            hp = ShPolygon(hole_ring)
+        except Exception:  # noqa: BLE001
+            return
+        if hp.area < 0.01:
+            return
+        if coverage is None:
+            emit_ring(hole_ring, bg_color, None)
+            return
+        try:
+            bg = hp.difference(coverage)
+            covered = hp.intersection(coverage)
+        except Exception:  # noqa: BLE001
+            emit_ring(hole_ring, bg_color, None)
+            return
+        for g in _polys_of(bg):
+            emit_ring(g.exterior, bg_color, None)
+        for g in _polys_of(covered):
+            emit_ring(g.exterior, strip_color, "gray75")
+            for sub in g.interiors:            # 更深洞递归
+                draw_hole(sub)
+
+    def emit_poly(poly, fid):
+        ext = getattr(poly, "exterior", None)
+        if ext is None:
+            return
+        emit_ring(ext, strip_color, "gray75", fid)
+        for hole in poly.interiors:
+            draw_hole(hole)
+
+    if coverage is not None:
+        for pg in _polys_of(coverage):
+            emit_poly(pg, None)
+    for fid, poly in (feature_coverage or {}).items():
+        if poly is not None:
+            for pg in _polys_of(poly):
+                emit_poly(pg, fid)
+
+    for pg in _polys_of(missed_areas):
+        ext = getattr(pg, "exterior", None)
+        if ext is None:
+            continue
+        missed_list.append({"ring": [(p[0], p[1]) for p in ext.coords],
+                            "fill": missed_color, "stipple": None, "fid": None})
+        for hole in pg.interiors:              # 已覆盖孤岛补条带色
+            missed_list.append({"ring": [(p[0], p[1]) for p in hole.coords],
+                                "fill": strip_color, "stipple": "gray50",
+                                "fid": None})
+    return cov_list, missed_list

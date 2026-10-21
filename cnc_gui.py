@@ -15,7 +15,7 @@ from tkinter import ttk, filedialog, messagebox
 from dataclasses import asdict
 
 from cam import CamJob
-from canvas_view import CanvasView
+from canvas_view import CanvasView, C_BG, C_COVERAGE, C_COVER_HOLE
 from panels import LeftViews, ParamsPanel, STRATEGIES
 import toolpath
 from model import (JobConfig, Tool, ToolLibrary, Feature, Move, THROUGH_HOLE,
@@ -321,8 +321,6 @@ class App(tk.Tk):
                 polys.append(pg)
                 fcov[fid] = pg
         green_union = unary_union(polys) if polys else None
-        self.view.set_coverage(green_union)
-        self.view.set_feature_coverage(fcov)
         # 红色漏切：仅清槽特征（偏置/平行）目标可达区 − 总覆盖；
         # 螺旋/轮廓只走一圈、避让岛保留，不属于漏切，不参与
         missed_polys: list = []
@@ -346,8 +344,13 @@ class App(tk.Tk):
                 f.params.allowance, green_union)
             if m is not None:
                 missed_polys.append(m)
-        self.view.set_missed_areas(
-            unary_union(missed_polys) if missed_polys else None)
+        missed_union = unary_union(missed_polys) if missed_polys else None
+        # 展开为扁平绘制数据（017）：递归布尔只在此处跑一次，
+        # 画布 redraw 仅做坐标变换 + create_polygon
+        cov_draw, missed_draw = toolpath.expand_coverage_for_draw(
+            green_union, fcov, missed_union,
+            bg_color=C_BG, strip_color=C_COVERAGE, missed_color=C_COVER_HOLE)
+        self.view.set_coverage_draw_data(cov_draw, missed_draw)
 
     def do_sort(self):
         if not self.job.result:
@@ -553,9 +556,8 @@ class App(tk.Tk):
         if invalidate and 0 <= self.active_idx < len(self.boards):
             self.boards[self.active_idx].moves_by_tool = {}
             self.boards[self.active_idx].feature_moves = {}
-        self.view.coverage = None
-        self.view.feature_coverage = {}
-        self.view.missed_areas = None
+        self.view.coverage_draw_list = []
+        self.view.missed_draw_list = []
         self.view._cov_items = {}
         self.view.set_data_keep(self.job.result.features)
         # 刀路预览清空（参数可能变了）
