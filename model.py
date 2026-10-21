@@ -100,6 +100,7 @@ class FeatureParams:
     parallel_axis: str = "X"         # 平行清槽走刀方向：X / Y
     pocket_direction: str = "outside_in"  # 偏置清槽起刀：outside_in 外→内/ inside_out 内→外
     vector_side: str = "center"      # 沿矢量加工刀位：left / right / center
+    contour_side: str = "auto"       # 轮廓刀位：auto 自动(外框外/内部内) / inside 内侧 / outside 外侧
     allowance: float = 0.0           # 余量：正=少切，负=过切
     approach_z: float | None = None  # 直下刀模式的 G0 接近高度（如 Z1）
     enabled: bool = True

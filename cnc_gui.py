@@ -20,7 +20,7 @@ from panels import LeftViews, ParamsPanel, STRATEGIES
 import toolpath
 from model import (JobConfig, Tool, ToolLibrary, Feature, Move, THROUGH_HOLE,
                    DRILL, COUNTERBORE, RECT_POCKET, POCKET, CIRCULAR_POCKET,
-                   SPIRAL, VECTOR_CUT, OFFSET_POCKET, PARALLEL_POCKET, CONTOUR)
+                   SPIRAL, VECTOR_CUT, OFFSET_POCKET, PARALLEL_POCKET)
 from io_dxf import ROLE_IGNORE
 from recognize import Rules, HoleRule, LayerDefault
 
@@ -291,7 +291,10 @@ class App(tk.Tk):
 
     def _update_coverage(self, moves_by_tool: dict, feature_moves: dict):
         """覆盖区计算与送显：全部刀 FEED 段按各自刀径缓冲并集（统一深绿，
-        不按刀分色）。每特征另算分区多边形，供点选高亮联动。
+        不按刀分色），含轮廓/螺旋——绿色覆盖语义=刀具实际扫过的实体条带
+        （对齐 ArtCAM「绘制实体」）。每特征另算分区多边形供点选高亮。
+        红色漏切仅对清槽特征显式计算：目标可达区内总覆盖没扫到的部分；
+        螺旋/轮廓环内、避让岛均不红。
 
         moves_by_tool / feature_moves 来自板缓存（baoyuan 快照）或现算；
         刀径从刀具库按刀取——不同刀直径不同，禁止用第一把刀刀径统一算。
@@ -300,12 +303,14 @@ class App(tk.Tk):
         # 特征覆盖区：fid → 该特征全部 FEED 段沿其刀具刀径的并集
         by_fid = {f.id: f for f in self.job.result.features} \
             if self.job.result else {}
-        # 整体覆盖区：遍历特征级刀路，跳过 CONTOUR 轮廓特征
-        # （轮廓=沿轮廓切一圈，用刀心轨迹线表示，不参与覆盖区/清料检查）
+        by_cid = {c.id: c for c in self.job.result.contours} \
+            if self.job.result else {}
+        # 绿色覆盖：所有策略（含 CONTOUR 轮廓 / SPIRAL 螺旋的刀径宽条带）
         polys: list = []
+        fcov: dict = {}
         for fid, mv in (feature_moves or {}).items():
             f = by_fid.get(fid)
-            if f is None or f.params.strategy == CONTOUR:
+            if f is None:
                 continue
             try:
                 dia = self.job.lib.get(f.params.tool_id).diameter
@@ -314,20 +319,35 @@ class App(tk.Tk):
             pg = toolpath.covered_area(mv, dia)
             if pg is not None:
                 polys.append(pg)
-        self.view.set_coverage(unary_union(polys) if polys else None)
-        fcov: dict = {}
-        for fid, mv in (feature_moves or {}).items():
-            f = by_fid.get(fid)
-            if f is None or f.params.strategy == CONTOUR:
+                fcov[fid] = pg
+        green_union = unary_union(polys) if polys else None
+        self.view.set_coverage(green_union)
+        self.view.set_feature_coverage(fcov)
+        # 红色漏切：仅清槽特征（偏置/平行）目标可达区 − 总覆盖；
+        # 螺旋/轮廓只走一圈、避让岛保留，不属于漏切，不参与
+        missed_polys: list = []
+        result = self.job.result
+        for f in (result.features if result is not None else []):
+            if f.params.strategy not in (OFFSET_POCKET, PARALLEL_POCKET):
+                continue
+            if not f.params.enabled or f.params.depth <= 0:
+                continue
+            ct = by_cid.get(f.contour_id)
+            if ct is None or not ct.closed:
                 continue
             try:
                 dia = self.job.lib.get(f.params.tool_id).diameter
             except KeyError:
                 continue
-            pg = toolpath.covered_area(mv, dia)
-            if pg is not None:
-                fcov[fid] = pg
-        self.view.set_feature_coverage(fcov)
+            islands = toolpath._collect_islands(ct, result.contours,
+                                                self.job.cfg)
+            m = toolpath.pocket_missed_area(
+                ct.pts, islands, dia, self.job.cfg,
+                f.params.allowance, green_union)
+            if m is not None:
+                missed_polys.append(m)
+        self.view.set_missed_areas(
+            unary_union(missed_polys) if missed_polys else None)
 
     def do_sort(self):
         if not self.job.result:
@@ -535,6 +555,7 @@ class App(tk.Tk):
             self.boards[self.active_idx].feature_moves = {}
         self.view.coverage = None
         self.view.feature_coverage = {}
+        self.view.missed_areas = None
         self.view._cov_items = {}
         self.view.set_data_keep(self.job.result.features)
         # 刀路预览清空（参数可能变了）

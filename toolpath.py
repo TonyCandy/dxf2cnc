@@ -661,7 +661,12 @@ def gen_feature_moves(feature: Feature, contour: Contour,
                             stepover=sv, direction=p.pocket_direction)
 
     if p.strategy == CONTOUR and contour.closed:
-        side = "outside" if contour.is_stock_outline else "inside"
+        # 刀位：手动指定 inside/outside 优先；auto 按旧规则——
+        # 板外框外切（切下零件尺寸=图形），内部图形内切（孔不扩径）
+        if p.contour_side in ("inside", "outside"):
+            side = p.contour_side
+        else:
+            side = "outside" if contour.is_stock_outline else "inside"
         return contour_moves(contour.pts, tool, depths, cfg,
                              side=side, allowance=p.allowance)
 
@@ -726,3 +731,31 @@ def covered_area(moves, tool_diameter: float):
     except Exception:  # noqa: BLE001
         return None
     return None if area.is_empty else area
+
+
+def pocket_missed_area(ring: list[tuple[float, float]],
+                      islands: list[list[tuple[float, float]]],
+                      tool_diameter: float, cfg: JobConfig,
+                      allowance: float, coverage):
+    """清槽"应清未清"漏切区（画布红色预览用，纯预览，不影响刀路）。
+
+    目标可达区 = 口袋多边形(外∖岛) 内缩 reach 再外扩 D/2；
+    reach = D/2 - (pocket_overcut - allowance)，与 pocket_moves 的
+    first_offset、parallel_moves 的 reach 同一公式。
+    漏切 = 目标可达区 − 全部刀路覆盖并集（coverage）。
+    贴边圈、刀具进不去的窄区/直角、余量留边、避让岛本身均不在目标可达
+    区内，不会误报；结果为空返回 None。
+    """
+    if coverage is None:
+        return None
+    eff_overcut = cfg.pocket_overcut - allowance
+    reach = tool_diameter / 2.0 - eff_overcut
+    target = _pocket_poly(ring, islands)
+    expected = target.buffer(-reach).buffer(tool_diameter / 2.0)
+    if expected.is_empty:
+        return None
+    try:
+        m = expected.difference(coverage)
+    except Exception:  # noqa: BLE001
+        return None
+    return None if m.is_empty else m

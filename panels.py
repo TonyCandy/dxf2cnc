@@ -331,12 +331,15 @@ class ParamsPanel(ttk.Frame):
         self.var_pdir = tk.StringVar(value="从外到内")
         ttk.Combobox(w, textvariable=self.var_pdir, state="readonly",
                      values=["从外到内", "从内到外"], width=8).pack(side=tk.LEFT)
-        # 刀位（沿矢量加工时显示：刀心在矢量左/右/居中）
+        # 刀位（沿矢量：矢量左/右/居中；轮廓：自动/轮廓内侧/轮廓外侧）
         w = row(8, "刀位")
         self._row_side = w
         self.var_side = tk.StringVar(value="居中")
-        ttk.Combobox(w, textvariable=self.var_side, state="readonly",
-                     values=["矢量左侧", "矢量右侧", "居中"], width=8).pack(side=tk.LEFT)
+        self.cb_side = ttk.Combobox(w, textvariable=self.var_side,
+                                    state="readonly",
+                                    values=["矢量左侧", "矢量右侧", "居中"],
+                                    width=8)
+        self.cb_side.pack(side=tk.LEFT)
         # 启用
         w = row(9, "启用")
         self.var_enabled = tk.BooleanVar(value=True)
@@ -383,10 +386,20 @@ class ParamsPanel(ttk.Frame):
             self._row_step.grid_remove(); self._row_step._label.grid_remove()
             self._row_axis.grid_remove(); self._row_axis._label.grid_remove()
             self._row_pdir.grid_remove(); self._row_pdir._label.grid_remove()
+        # 刀位行：沿矢量=矢量左/右/居中；轮廓=自动/轮廓内/轮廓外；其余隐藏
         if code == VECTOR_CUT:
+            side_opts = ["矢量左侧", "矢量右侧", "居中"]
+            self._row_side.grid(); self._row_side._label.grid()
+        elif code == CONTOUR:
+            side_opts = ["自动", "轮廓内侧", "轮廓外侧"]
             self._row_side.grid(); self._row_side._label.grid()
         else:
+            side_opts = None
             self._row_side.grid_remove(); self._row_side._label.grid_remove()
+        if side_opts is not None:
+            self.cb_side.configure(values=side_opts)
+            if self.var_side.get() not in side_opts:
+                self.var_side.set("居中" if code == VECTOR_CUT else "自动")
         custom = self.var_step_mode.get() == "自定义"
         self.ent_step_mm.configure(state=tk.NORMAL if custom else tk.DISABLED)
         self._lbl_step_mm.configure(
@@ -442,8 +455,13 @@ class ParamsPanel(ttk.Frame):
         self.var_axis.set(p.parallel_axis or "X")
         self.var_pdir.set("从内到外" if p.pocket_direction == "inside_out"
                           else "从外到内")
-        self.var_side.set({"left": "矢量左侧", "right": "矢量右侧"}.get(
-            p.vector_side, "居中"))
+        # 刀位回填：轮廓用 contour_side，其余（含沿矢量）用 vector_side
+        if p.strategy == CONTOUR:
+            self.var_side.set({"inside": "轮廓内侧", "outside": "轮廓外侧"}.get(
+                p.contour_side, "自动"))
+        else:
+            self.var_side.set({"left": "矢量左侧", "right": "矢量右侧"}.get(
+                p.vector_side, "居中"))
         self._update_strategy_rows()
         self.var_enabled.set(p.enabled)
         multi = f"（{len(features)} 项，批量为首项参数）" if len(features) > 1 else ""
@@ -488,6 +506,19 @@ class ParamsPanel(ttk.Frame):
         else:
             step_mm = None
             step_factor = int(sm[:-1]) / 100.0
+        # 刀位：轮廓 contour_side / 沿矢量 vector_side 互斥收集，
+        # 其余策略收默认值防脏值
+        if strategy == CONTOUR:
+            contour_side = {"轮廓内侧": "inside", "轮廓外侧": "outside"}.get(
+                self.var_side.get(), "auto")
+            vector_side = "center"
+        elif strategy == VECTOR_CUT:
+            contour_side = "auto"
+            vector_side = {"矢量左侧": "left", "矢量右侧": "right"}.get(
+                self.var_side.get(), "center")
+        else:
+            contour_side = "auto"
+            vector_side = "center"
         return FeatureParams(tool_id=self.var_tool.get(), depth=depth,
                              n_passes=n_passes, stepdown=stepdown,
                              strategy=strategy, enabled=self.var_enabled.get(),
@@ -496,8 +527,8 @@ class ParamsPanel(ttk.Frame):
                              pocket_direction=("inside_out"
                                                if self.var_pdir.get() == "从内到外"
                                                else "outside_in"),
-                             vector_side={"矢量左侧": "left", "矢量右侧": "right"}.get(
-                                 self.var_side.get(), "center"))
+                             vector_side=vector_side,
+                             contour_side=contour_side)
 
     def _apply(self):
         p = self._collect()
@@ -515,6 +546,7 @@ class ParamsPanel(ttk.Frame):
             f.params.parallel_axis = p.parallel_axis
             f.params.pocket_direction = p.pocket_direction
             f.params.vector_side = p.vector_side
+            f.params.contour_side = p.contour_side
         if self.on_change:
             self.on_change()
 
@@ -539,5 +571,6 @@ class ParamsPanel(ttk.Frame):
                 f.params.stepover_mm = p.stepover_mm
                 f.params.parallel_axis = p.parallel_axis
                 f.params.vector_side = p.vector_side
+                f.params.contour_side = p.contour_side
         if self.on_change:
             self.on_change()
