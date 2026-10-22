@@ -209,7 +209,11 @@ class App(tk.Tk):
             return
         b = self.boards[self.active_idx]
         self.job.result = b.result
-        self.job.ordered = b.ordered
+        if b.ordered:
+            # 板缓存有排序（切板存回/打开 baoyuan/排序与手动调整同步过）→ 采用；
+            # 为空（单板导入后从未排序落盘）→ 保留 job.ordered 内存最新序，
+            # 防止 moves_by_tool 里空列表触发 sort() 硬编码 around 回退（019 修复）
+            self.job.ordered = b.ordered
         b.moves_by_tool = self.job.moves_by_tool()
         b.feature_moves = self.job.moves_by_feature()
         b.ordered = self.job.ordered       # moves_by_tool 内部可能自动排序，存回板
@@ -357,6 +361,10 @@ class App(tk.Tk):
             return
         strategy = self._sort_names.get(self._sort_var.get(), "around")
         self.job.sort(strategy)
+        # 同步板缓存（019 修复）：否则"排序 → 生成刀路"时
+        # gen_toolpath_preview 的 job.ordered = b.ordered 会把排序回退
+        if 0 <= self.active_idx < len(self.boards):
+            self.boards[self.active_idx].ordered = self.job.ordered
         self._refresh_views()
         n = sum(1 for f in self.job.ordered if f.params.enabled)
         self.status.set(f"排序完成：{n} 个启用特征（{self._sort_var.get()}）")
@@ -386,20 +394,26 @@ class App(tk.Tk):
         for i, ff in enumerate(lst):
             ff.order = i + 1
         self.job.ordered = lst
+        # 同步板缓存（019 修复）：否则"手动排序 → 生成刀路"时
+        # job.ordered = b.ordered（板内仍是导入时的旧序/空）会把手动序回退
+        if 0 <= self.active_idx < len(self.boards):
+            self.boards[self.active_idx].ordered = self.job.ordered
         self._sort_var.set("手动锁定")
         self._refresh_views()
         self.status.set(f"手动排序：{f.kind_cn()} → 第 {f.order} 号")
 
     def _regroup_feature(self, fid: str, new_group: str):
-        """把特征转移到其他分组（识别分组不对时手动归类）。"""
-        if not self.job.result:
-            return
-        for f in self.job.result.features:
-            if f.id == fid:
-                f.group_key = new_group
-                self._refresh_views()
-                self.status.set(f"{f.label} 已转移到分组「{new_group}」")
-                return
+        """把特征转移到其他分组（识别分组不对时手动归类）。
+        跨板：分组树子项可能属于任何板，全板按 id 查找后改 group_key。
+        转组只改分组标签，不自动继承新组参数——参数用"应用到选中/全组"手动写。"""
+        for b in self.boards:
+            for f in b.result.features:
+                if f.id == fid:
+                    f.group_key = new_group
+                    self._refresh_views()
+                    self.status.set(f"{f.label}（{b.name}）已转移到分组「{new_group}」")
+                    return
+        self.status.set(f"未找到特征 {fid}，转移分组失败")
 
     # ------------------------------------------------------------ 过程文件
     def _save_baoyuan(self, out_dir: Path, basename: str, dxf_path: str | None = None,
@@ -553,9 +567,14 @@ class App(tk.Tk):
                                  all_features=all_feats, board_of=board_of)
         # 参数可能变了：失效活动板缓存并清覆盖区数据（须在 set_data_keep
         # 之前——其内部 redraw 会画已清空的覆盖区）；切板路径不失效
-        if invalidate and 0 <= self.active_idx < len(self.boards):
-            self.boards[self.active_idx].moves_by_tool = {}
-            self.boards[self.active_idx].feature_moves = {}
+        if invalidate:
+            # 跨板与单板逻辑对齐（018）：任何参数/顺序/几何改动，所有板的
+            # 刀路缓存一并失效——切到别的板也是"刀路消失、等点生成刀路
+            # 重算"，不再把改动前的旧刀轨挂在画布上。切板路径走
+            # invalidate=False 不受影响，仍能显示该板已算好的刀路。
+            for b in self.boards:
+                b.moves_by_tool = {}
+                b.feature_moves = {}
         self.view.coverage_draw_list = []
         self.view.missed_draw_list = []
         self.view._cov_items = {}
@@ -650,6 +669,7 @@ class App(tk.Tk):
                         problems.append(f"[{b.name}] 刀径过大：{f.label}")
         if problems:
             messagebox.showwarning("批量导出检查未通过", "\n".join(problems[:10]))
+            self._restore_active_job()
             self._set_active(self.active_idx)
             return
         # ---- 导出 ----
@@ -661,9 +681,20 @@ class App(tk.Tk):
             if written:
                 self._save_baoyuan(Path(out_dir), b.name, dxf_path=b.path, board=b)
                 results.append(f"{b.name}：" + "  ".join(str(v) for v in written.values()))
+        self._restore_active_job()
         self._set_active(self.active_idx)
         self.status.set("批量导出完成（" + str(len(results)) + " 板）")
         messagebox.showinfo("批量导出完成", "\n".join(results) or "无可导出内容")
+
+    def _restore_active_job(self):
+        """把 job 三件套切回活动板状态。批量导出循环会临时把 job 指向
+        其他板（result/ordered/data），结束前必须恢复，否则 _set_active
+        开头"存回当前板排序"会把外板的 ordered 写进活动板缓存（串板）。"""
+        if 0 <= self.active_idx < len(self.boards):
+            ab = self.boards[self.active_idx]
+            self.job.result = ab.result
+            self.job.ordered = ab.ordered
+            self.job.data = ab.data
 
     # ---------------------------------------------------------------- 联动
     def _features_by_ids(self, fids: set[str]) -> list:

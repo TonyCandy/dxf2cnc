@@ -232,8 +232,27 @@ class LeftViews(ttk.Notebook):
 
     # ---------------------------------------------------------- 同步
     def selected_feature_ids(self) -> set[str]:
+        """当前活动页对应树的选择集合。
+
+        017 修复：不再取分组树+列表树两棵树 selection 的并集——ttk 的
+        selection 跨页持久，在分组页点过的组切到列表页后仍残留，导致
+        "列表单选一个序 → 应用到选中"把残留组一起覆盖（用户实测
+        加工错误.baoyuan：17 个特征策略被串改）。按活动页取树：
+        分组页=分组树（父节点展开为子项）、列表页=列表树、图层页=空。
+        画布点选经 show_selection 两树同步设置，不受影响。
+        """
+        try:
+            cur = self.index(self.select())
+        except Exception:   # noqa: BLE001 —— 无活动页兜底为空
+            return set()
+        if cur == 0:
+            trees = (self.tree_group,)
+        elif cur == 1:
+            trees = (self.tree_list,)
+        else:
+            return set()    # 图层页：无特征选择
         out = set()
-        for tree in (self.tree_group, self.tree_list):
+        for tree in trees:
             for iid in tree.selection():
                 if tree.get_children(iid):
                     # 分组父节点：选全部子节点
@@ -531,6 +550,8 @@ class ParamsPanel(ttk.Frame):
                              contour_side=contour_side)
 
     def _apply(self):
+        """应用到选中：把表单参数写到当前选中特征（多选=批量）。
+        字段清单必须与 _apply_group 保持完全一致（12 个）。"""
         p = self._collect()
         if p is None or not self.features:
             return
@@ -551,6 +572,9 @@ class ParamsPanel(ttk.Frame):
             self.on_change()
 
     def _apply_group(self):
+        """应用到全组：同 group_key 的全部特征（跨板）统一写参数。
+        字段清单必须与 _apply 保持完全一致（12 个）——两处循环各自维护，
+        一边加字段另一边忘了就会串参（018：曾漏 pocket_direction）。"""
         if not self.features:
             return
         groups = {f.group_key for f in self.features}
@@ -570,6 +594,7 @@ class ParamsPanel(ttk.Frame):
                 f.params.stepover_factor = p.stepover_factor
                 f.params.stepover_mm = p.stepover_mm
                 f.params.parallel_axis = p.parallel_axis
+                f.params.pocket_direction = p.pocket_direction
                 f.params.vector_side = p.vector_side
                 f.params.contour_side = p.contour_side
         if self.on_change:
